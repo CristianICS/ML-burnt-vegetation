@@ -1,0 +1,20 @@
+code_v1,code_v1_reclass,code_ifn,label,label_reclass,label_rc_code,color
+1,1,24,Pinus halepensis,Pinus halepensis,Ph,#31a354
+2,2,25,Pinus nigra,Pinus nigra,Pn,#addd8e
+3,3,26,Pinus pinaster,Pinus pinaster,Pp,#addd8e
+4,4,21,Pinus sylvestris,Pinus sylvestris,Ps,#2ca25f
+5,5,22,Pinus uncinata,Pinus uncinata,Pu,#2ca25f
+6,6,44,Quercus faginea,Quercus g. cerrioides,Qgc,#99d8c9
+7,7,45,Quercus ilex,Quercus ilex,Qi,#8856a7
+8,6,71,Fagus sylvatica,Quercus g. cerrioides,Qgc,#99d8c9
+9,7,38,Juniperus thurifera,Quercus ilex,Qi,#8856a7
+11,11,,M. Pinus halepensis,S. Mediterranean pine,Mpm,#f7fcb9
+12,12,,M. Pinus nigra,S. Pinus nigra,Mpn,#f7fcb9
+13,13,,M. Pinus pinaster,S. Pinus pinaster,Mpp,#a6bddb
+14,14,,M. Pinus sylvestris,S. Pinus sylvestris,Mps,#fc9272
+15,15,,M. Pinus uncinata,S. Pinus uncinata,Mpu,#a8ddb5
+16,16,,M. Quercus faginea,S. Quercus g. cerrioides,Mqgc,#e5f5e0
+17,17,,M. Quercus ilex,S. Quercus ilex,Mqi,#43a2ca
+18,16,,M. Fagus sylvatica,S. Quercus g. cerrioides,Mqgc,#e5f5e0
+19,17,,M. Juniperus thurifera,S. Quercus ilex,Mqi,#43a2ca
+20,20,,Low vegetation ground,Sparse vegetation,Bg,#ffffff
