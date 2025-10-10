@@ -1,6 +1,6 @@
 # Machine Learning for Post-Fire Vegetation Classification in Aragón
 
-[![DOI](https://zenodo.org/badge/1056569546.svg)](https://doi.org/10.5281/zenodo.17123378)
+[[![DOI](https://zenodo.org/badge/1056569546.svg)](https://doi.org/10.5281/zenodo.17123378)](https://doi.org/10.5281/zenodo.17297183)
 
 The presented framework integrates **Landsat multispectral imagery**, **topographic and edaphic variables**, and **machine-learning classifiers** (Random Forest and Support Vector Machines) to classify forest vegetation and its associated burned-shrub states across Aragón, Spain.
 
