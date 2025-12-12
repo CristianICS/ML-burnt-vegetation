@@ -1,3 +1,4 @@
+bib/
 data/fires.gpkg
 data/labels/ifn/
 data/labels/ifn2_labels.gpkg
@@ -16,7 +17,11 @@ Notebooks/inspect_ifn3_4.ipynb
 papers/
 results/logs/
 results/tile_extracted_values/
+results/tile_extracted_values_v0/
+results/dataset.gpkg
 results/dataset_geo.gpkg
+results/dataset_geo_v0.gpkg
 Python/__pycache__/
+Python/v0
 Python_deprecated/
 README_esp.md

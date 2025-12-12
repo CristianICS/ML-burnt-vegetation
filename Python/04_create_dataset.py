@@ -5,7 +5,7 @@ Sources:
 1) Manually digitized labels
 2) NFI/IFN (National Forest Inventory)
 3) LUCAS
-4) SIOSE (bare soil / ground points)
+4) SIOSE (bare soil / sparse vegetation points)
 """
 from __future__ import annotations
 
@@ -16,32 +16,30 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 
-from utils_dataset import Landsat, extract_global
+from utils.dataset import Landsat, extract_global
 
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
 
 # Base data folder: <repo_root>/data
-# NOTE: Path(__file__).parents[1] -> parent of the folder containing this script's folder
 ROOT = Path(Path(__file__).parents[1], "data")
 
 # Where to save the desired dataset
-dataset_output = Path(ROOT.parent, "results", "dataset.gpkg")
+dataset_output = Path(ROOT.parent, "results", "dataset_geo.gpkg")
 
 # Where to save the Landsat predictor variables
 out_folder = Path(ROOT.parent, "results", "tile_extracted_values")
 out_folder.mkdir(parents=True, exist_ok=True)  # ensure output folder exists
 
 # Landsat/Sentinel composites images
-# TIP: Make this configurable (e.g., via env var) rather than a hard-coded Windows path
-images_path = Path(ROOT, "HarmoPAF_time_series")
+images_path = Path(r"F:\Borini\harmoPAF\HarmoPAF_time_series")
 
 # Geometry of image tiles (used to filter points within tiles)
 tile_bboxes_path = Path(ROOT, "tiles_perimeters.gpkg")
 
 # Target columns for the unified dataset.
-# NOTE: "YEAR" was listed but not provided by some sources -> we ensure it exists.
+# NOTE: "YEAR" was listed but not provided by some sources
 target_cols = ["ESPE", "ESPE_rc", "YEAR", "source", "FCC", "Ocu1", "geometry"]
 
 # -----------------------------------------------------------------------------
@@ -88,25 +86,36 @@ def align_crs(
 # -----------------------------------------------------------------------------
 # Load & unify labels
 # -----------------------------------------------------------------------------
-
+print("Load and unify labels...")
 labels: list[gpd.GeoDataFrame] = []
 
-# 1) Manually digitized labels (assumed "correct format")
+# Manually digitized labels (assumed "correct format")
 manual = gpd.read_file(Path(ROOT, "labels", "digitized_labels.gpkg"))
-# We'll use manual as reference CRS for the rest
+# Manual as reference CRS for the rest is used
 ref_crs = manual.crs
 
 # Ensure manual has all target columns (no-ops if already present)
+manual["source"] = "Digitized"
 manual = ensure_columns(manual, target_cols)
-manual["source"] = manual.get("source", "Digitized")
 labels.append(manual)
 
-# 2) Handle NFI labels (IFN2, IFN3, IFN4)
+# Manually digitized soil
+manual_soil = gpd.read_file(ROOT / "labels" / "digitized_soil_25830.gpkg")
+manual_soil = align_crs(manual_soil, ref_crs)
+mask = "(NDVI >= 0.08) & (NDVI <= 0.15) & (IL > 0.7)"
+manual_soil.query(mask, inplace=True)
+# Complete the information
+manual_soil[["ESPE", "ESPE_rc"]] = 20
+manual_soil[["Ocu1", "FCC"]] = 0
+manual_soil["source"] = "Digitized"
+manual_soil = ensure_columns(manual_soil, target_cols)
+labels.append(manual_soil)
+
+# Handle NFI labels (IFN2, IFN3, IFN4)
 # Include reclassified codes based on mapping file.
 codes = pd.read_csv(Path(ROOT, "labels", "label_codes.csv"))
 
 # Build a mapping ESPE -> reclass to avoid join overhead on every call
-# IMPORTANT: Make sure both mapping index and IFN['ESPE'] have consistent dtype.
 code_map = (
     codes.set_index("code_v1")["code_v1_reclass"]
     .dropna()
@@ -122,12 +131,16 @@ def add_espe_reclass(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         try:
             gdf["ESPE"] = gdf["ESPE"].astype(code_map.index.dtype)
         except Exception:
-            # If coercion fails (e.g., strings mixed with ints), try a safe cast
+            # If coercion fails (e.g., strings mixed with ints),
+            # try a safe cast:
             gdf["ESPE"] = pd.to_numeric(gdf["ESPE"], errors="coerce")
+
     gdf["ESPE_rc"] = gdf["ESPE"].map(code_map)
     return gdf
 
-for i in (2, 3, 4):
+# Add NFI information by NFI version
+nfi_versions = [2, 3, 4]
+for i in nfi_versions:
     ifn = gpd.read_file(Path(ROOT, "labels", f"ifn{i}_labels.gpkg"))
     ifn = add_espe_reclass(ifn)
     if "source" not in ifn.columns:
@@ -138,74 +151,77 @@ for i in (2, 3, 4):
     ifn = align_crs(ifn, ref_crs)
     labels.append(ifn)
 
-# 3) Handle SIOSE soil labels (sparse vegetation class)
+# Handle SIOSE soil labels (sparse vegetation class)
 bare_soil = gpd.read_file(Path(ROOT, "labels", "ground_points_db.gpkg"))
 
 # Broadcast scalar values across the specified columns
-bare_soil[["ESPE", "ESPE_rc"]] = 20       # "Sparse vegetation" class
-bare_soil[["Ocu1", "FCC"]] = 0            # default zeros as in original code
+# Add "Sparse vegetation" class code
+bare_soil[["ESPE", "ESPE_rc"]] = 20
+# Complete the information
+bare_soil[["Ocu1", "FCC"]] = 0
 bare_soil["source"] = "SIOSE"
 # YEAR was missing in the original code -> set to NaN (unknown)
-bare_soil["YEAR"] = np.nan
+# bare_soil["YEAR"] = np.nan
 
 bare_soil = ensure_columns(bare_soil, target_cols)
 bare_soil = align_crs(bare_soil, ref_crs)
 labels.append(bare_soil)
 
-# 4) LUCAS: add soil data from LUCAS (Land Use/Land Cover Area Frame Survey)
-# Original path used a raw string with backslashes; prefer Path for portability.
+# LUCAS: add soil data from LUCAS (Land Use/Land Cover Area Frame Survey)
 lucas_csv = Path(ROOT, "lucas", "LUCAS_2018_Copernicus_attributes.csv")
-
-# TIP: use 'usecols' to reduce memory footprint if this CSV is large
 lucas = pd.read_csv(lucas_csv, low_memory=False)
 
-# Convert to GeoDataFrame using WGS84
-# NOTE: 'GPS_LONG' & 'GPS_LAT' are column names in LUCAS 2018 Copernicus attributes.
+# Convert to GeoDataFrame using WGS84 columns
 x_col = lucas["GPS_LONG"]
 y_col = lucas["GPS_LAT"]
 g = gpd.points_from_xy(x_col, y_col, crs="EPSG:4326")
 lucas = gpd.GeoDataFrame(lucas, geometry=g)
-
-# Get points over Aragón (NUTS2 == ES24)
+# Get points over studied region (NUTS2 == ES24)
 lucas_aragon = lucas[lucas["NUTS2"] == "ES24"].copy()
 
 # Select only "Other bare soil" class (CPRN_LC == 'F4')
 lucas_aragon = lucas_aragon.query("CPRN_LC == 'F4'").copy()
+lucas_aragon = align_crs(lucas_aragon, ref_crs)
 
 # Set target attributes
 lucas_aragon[["ESPE", "ESPE_rc"]] = 20
 lucas_aragon[["Ocu1", "FCC"]] = 0
 lucas_aragon["source"] = "LUCAS"
-lucas_aragon["YEAR"] = 2018  # <- important: this was missing
+lucas_aragon["YEAR"] = 2018
 
-# Ensure required columns and CRS
+# Ensure required columns
 lucas_aragon = ensure_columns(lucas_aragon, target_cols)
-lucas_aragon = lucas_aragon.to_crs(ref_crs)
 labels.append(lucas_aragon)
 
 # -----------------------------------------------------------------------------
 # Concatenate all sources
 # -----------------------------------------------------------------------------
-
-# Once the dataset is created, add predictor variables information
+print("Concatenate all labels together...")
+# Once the dataset is created, add predictor variables' info
 dataset = pd.concat(labels, ignore_index=True)
 
-# Defensive check: drop rows with invalid geometries
-# (sometimes joins or mappings can leave NaNs or bad points)
-if isinstance(dataset, gpd.GeoDataFrame):
-    dataset = dataset[dataset.geometry.notna()].copy()
-    dataset = dataset.set_geometry("geometry")
-else:
-    # Ensure result is GeoDataFrame (pd.concat can downcast if some inputs were DataFrame)
+# Ensure result is GeoDataFrame (pd.concat can downcast if some inputs 
+# were DataFrame)
+if not isinstance(dataset, gpd.GeoDataFrame):
     dataset = gpd.GeoDataFrame(dataset, geometry="geometry", crs=ref_crs)
+
+# Defensive check: drop rows with missing geometries
+# (sometimes joins or mappings can leave NaNs or bad points)
+mask = dataset.geometry.notna()
+if not mask.all():
+    dataset = dataset.loc[mask]
+
+# Ensure correct active geometry
+if dataset.geometry.name != "geometry":
+    dataset = dataset.set_geometry("geometry")
 
 # -----------------------------------------------------------------------------
 # Landsat predictor variable extraction
 # -----------------------------------------------------------------------------
-
+print("Extracting Landsat information...")
 tile_bboxes = gpd.read_file(tile_bboxes_path)
 # Align tile geometries to dataset CRS (important for spatial filtering)
-tile_bboxes = align_crs(tile_bboxes, dataset.crs)
+tile_bboxes = align_crs(tile_bboxes, ref_crs)
 
 landsat = Landsat(dataset, tile_bboxes, out_folder, images_path)
 landsat.batch_extraction()
@@ -226,8 +242,9 @@ dataset = extract_global(
 # -----------------------------------------------------------------------------
 
 dataset_output.parent.mkdir(parents=True, exist_ok=True)
-
-# If you prefer not to overwrite, keep the conditional; otherwise, always write.
-# Here we overwrite for reproducibility and to avoid stale outputs.
 dataset.to_file(dataset_output, index=False, driver="GPKG")
+# Save another one without crs (this is the public one due to data protection)
+dataset\
+    .drop(columns="geometry")\
+    .to_csv(dataset_output.with_name("dataset.csv"), index=False)
 print(f"Saved dataset to: {dataset_output}")

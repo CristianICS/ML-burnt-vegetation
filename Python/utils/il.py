@@ -1,17 +1,17 @@
-"""
+r"""
 Create an Incident Local angle (IL) image using scene solar geometry from GEE
 and local terrain (aspect, slope) rasters.
 
-\[
+$$
 IL = \cos(\theta_z) \cdot \cos(\beta) 
    + \sin(\theta_z) \cdot \sin(\beta) \cdot \cos(\varphi_s - \alpha)
-\]
+$$
 
 where:
-  \theta_z = solar zenith,
-  \varphi_s = solar azimuth,
-  \beta  = slope,
-  \alpha  = aspect.
+  $\theta_z$ = solar zenith,
+  $\varphi_s$ = solar azimuth,
+  $\beta$  = slope,
+  $\alpha$  = aspect.
 """
 
 from __future__ import annotations
@@ -20,11 +20,14 @@ import math
 from statistics import mean
 from typing import Dict, Iterable, Tuple
 
+from Py6S import ExecutionError
 import ee  # type: ignore
 import numpy as np  # type: ignore
 import rasterio  # type: ignore
+import rioxarray
 from rasterio.crs import CRS  # type: ignore
 from rasterio.warp import transform_bounds  # type: ignore
+from rasterio.windows import from_bounds
 
 
 def _gee_init(project: str = "s-correction") -> None:
@@ -41,6 +44,8 @@ def _gee_init(project: str = "s-correction") -> None:
 class IL:
     """
     Compute Incident Local (IL) using GEE solar geometry + local DEM products.
+
+    :bounds_xy: left (minx), bottom (miny), right (maxx), top (maxy)
     """
 
     # USGS Landsat L2 collections (C2/T1/L2)
@@ -54,19 +59,21 @@ class IL:
     def __init__(
         self,
         tile_meta: Dict,
-        bounds_xyxy: Tuple[float, float, float, float],
+        bounds_xy: Tuple[float, float, float, float],
         crs
     ):
         _gee_init()
         self.prop_vals = self._extract_scene_metadata(
-            tile_meta, bounds_xyxy, crs)
+            tile_meta, bounds_xy, crs)
+        self.bounds = bounds_xy
+        self.crs = crs
 
     # ---------------------------- GEE helpers -----------------------------
 
     def _extract_scene_metadata(
         self,
         tile_meta: Dict,
-        bounds_xyxy: Tuple[float, float, float, float],
+        bounds_xy: Tuple[float, float, float, float],
         crs
     ) -> Dict[str, float]:
         """
@@ -77,7 +84,7 @@ class IL:
         acquisition geometry between tiles.
         """
         xmin, ymin, xmax, ymax = transform_bounds(
-            crs, CRS.from_epsg(4326), *bounds_xyxy, always_xy=True
+            crs, CRS.from_epsg(4326), *bounds_xy
         )
         region = ee.Geometry.BBox(xmin, ymin, xmax, ymax)
 
@@ -106,15 +113,44 @@ class IL:
 
         # Fallback to NaN if a property list is empty to avoid 
         # ZeroDivisionError
-        return {k: (mean(v) if v else float("nan")) for k, v in prop_vals.items()}
+        return {
+            k: (mean(v) if v else float("nan"))
+            for k, v in prop_vals.items()
+        }
 
     # ----------------------------- IO helpers ----------------------------
 
-    @staticmethod
-    def _open_band(path) -> np.ndarray:
+    def _open_band(self, path) -> np.ndarray:
         """Read a single-band raster as a 2D NumPy array."""
         with rasterio.open(path) as src:
-            return src.read(1)
+
+            # Open it only inside the desired bounds
+            if self.crs != src.crs:
+                # Transform the target bounds into image's crs
+                xmin, ymin, xmax, ymax = transform_bounds(
+                    self.crs, src.crs, *self.bounds, densify_pts=10
+                )
+            else:
+                xmin, ymin, xmax, ymax = self.bounds
+            # Clip bbox to raster bounds (avoid giant/outside windows)
+            xmin = max(xmin, src.bounds.left)
+            xmax = min(xmax, src.bounds.right)
+            ymin = max(ymin, src.bounds.bottom)
+            ymax = min(ymax, src.bounds.top)
+
+            # If no overlap after clipping -> empty
+            if xmin >= xmax or ymin >= ymax:
+                raise ExecutionError(
+                    "No overlap after clipping, returning empty array.")
+                # return np.zeros((0, 0), dtype=src.dtypes[0])
+            
+            # Convert bounding box to raster window
+            # and round them because rasterio's window expects integer values
+            window = from_bounds(
+                xmin, ymin, xmax, ymax, transform=src.transform
+            ).round_offsets().round_lengths()
+            # Read raster only inside prior window
+            return src.read(1, window=window)
 
     # ------------------------------ Compute ------------------------------
 
@@ -134,7 +170,7 @@ class IL:
         aspect_deg = self._open_band(aspect_path)
         slope_deg = self._open_band(slope_path)
 
-        # Degrees → radians (use np.deg2rad for clarity/vectorization)
+        # Degrees to radians (use np.deg2rad for clarity/vectorization)
         aspect = np.deg2rad(aspect_deg)
         slope = np.deg2rad(slope_deg)
         theta_z = np.deg2rad(90.0 - sun_el)  # solar zenith

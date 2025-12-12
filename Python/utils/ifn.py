@@ -1,8 +1,7 @@
 """Handle Spain FNI databases"""
 from pathlib import Path
-import re
-from glob import glob
 from dbfread import DBF # type: ignore
+import re
 import pyodbc # type: ignore
 import pandas as pd # type: ignore
 

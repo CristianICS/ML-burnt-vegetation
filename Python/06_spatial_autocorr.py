@@ -1,16 +1,16 @@
-"""Compute Moran's I for dataset version."""
-import libpysal
+"""Compute Moran's I to check spatial autocorrelation for each dataset."""
 from pathlib import Path
 from esda.moran import Moran
-from utils_models import Dataset
-
+from utils.model import Dataset
+import libpysal
 
 ROOT = Path(__file__).resolve().parent.parent
-# Load your GeoDataFrame
-labels_dataset_path = Path(ROOT, "results/dataset.gpkg")
+# Load the GeoDataFrame (only geo version)
+labels_dataset_path = Path(ROOT, "results/dataset_geo.gpkg")
 label_codes_path = Path(ROOT, "data/labels/label_codes.csv")
-dataset = Dataset(labels_dataset_path, label_codes_path, 1)
-print(dataset.matrix.shape)
+dataset = Dataset(labels_dataset_path, label_codes_path, 1, "summer_long")
+print(f"Dataset shape: {dataset.matrix.shape}")
+
 # Choose the numeric variable you want to analyze
 variable = dataset.matrix['NDVI_summer']
 

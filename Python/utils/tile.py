@@ -6,7 +6,7 @@ from rasterio.transform import rowcol
 from rasterio.warp import Resampling, reproject # type: ignore
 from rasterio.warp import calculate_default_transform # type: ignore
 from pyproj import Transformer
-from shapely import Polygon # type: ignore
+from shapely import box, Polygon # type: ignore
 import rioxarray
 import xarray as xr
 import numpy as np
@@ -47,7 +47,7 @@ class Tile:
         # Gathering img properties for the first time
         self.get_img_properties()
         # Check their attributes
-        # self._check_img_meta()
+        self._check_img_meta()
 
         # Save image bands into the Tile
         self.band_names = [
@@ -78,48 +78,6 @@ class Tile:
     def get_years(self):
         """Extract all the years inside the tile."""
         return list(set([t['date'].year for t in self.imgs_props.values()]))
-
-    def tif_to_zarr(self):
-        """Too much computational time. Discard."""
-        output_zarr = Path(self.path, "8_Zarr_files", self.name + ".zarr")
-        datasets = []
-
-        for fname, img_dict in self.imgs_props.items():
-
-            fpath = Path(self.imgs_dir, fname)
-
-            # Open raster as rioxarray
-            da = rioxarray.open_rasterio(fpath, chunks={"x": 1024, "y": 1024})
-            
-            # Add temporal coordinate
-            da = da.expand_dims(time=[img_dict["date"]])
-            # da = da.assign_coords(time=[])
-
-            datasets.append(da)
-
-        if not datasets:
-            print(f"No available TIFFs inside {self.imgs_dir}")
-            return
-
-        # Combine the data inside one array
-        stack = xr.concat(datasets, dim="time")
-
-        # Define encoding with compression (Blosc/Zstd is fast)
-        encoding = {
-            var: {
-                "compressor": xr.backends.zarr.BloscCompressor(cname="zstd", clevel=3, shuffle=2),
-                "chunks": (1, 1, 1024, 1024)  # (band, time, y, x)
-            }
-            for var in stack.data_vars
-        }
-
-        # Save to zarr compress array
-        stack.to_zarr(
-            output_zarr,
-            mode="w",
-            consolidated=True,
-            encoding=encoding
-        )
 
     def filter_date(self, start_date: str, end_date: str):
         """
@@ -285,7 +243,6 @@ class Tile:
 
         return mean_arr, mean_meta, bounds
 
-    
     def reduce_mean(self, array, meta):
         """
         The median is good for not to take into account outliers.
@@ -319,9 +276,10 @@ class Tile:
         rasters = []
 
         for name, d_dict in iterator:
-
             f = Path(self.imgs_dir, name)
-            r = rioxarray.open_rasterio(f, chunks={"x": 1024, "y": 1024})
+            r = rioxarray.open_rasterio(
+                f, masked=True, chunks={"x": 1024, "y": 1024})
+            
             # Add temporal dimension
             r = r.expand_dims(time=1)
             # Convert Python datetime to numpy.datetime64 to ensure
@@ -332,25 +290,140 @@ class Tile:
         stack = xr.concat(rasters, dim="time")
         return stack
     
-    def xarr_subtract(self, pnts, mean):
-        
-        xs = np.array([p.x for p in pnts.geometry])
-        ys = np.array([p.y for p in pnts.geometry])
+    @staticmethod
+    def reduce_xarr(
+        xarr,
+        time_range: list[str] | tuple[str, str],
+        reduce: str = "median",   # "mean", "median", etc.
+        gdf: gpd.GeoDataFrame = None,
+        bbox: bool = True,
+        skipna: bool = True,
+    ):
+        """
+        Create a composite over a bounding box using only timestamps within a
+        repeated month-day window each year between start and end dates.
 
+        Parameters
+        ----------
+        xarr : xarray (xr.DataArray or xr.Dataset)
+            rioxarray object with a 'time' coordinate.
+        time_range : [start_date, end_date]
+            ISO strings 'YYYY-MM-DD'. Example: ["2002-10-20", "2010-12-31"].
+        reduce : name of xarray reduction over 'time' (default 'mean').
+        gdf : gpd.GeoDataframe with geometries to perform the clip.
+        bbox: If use the bounding box of the feature (True) or its geometry
+        skipna : skip NaNs during reduction. 
+
+        Returns
+        -------
+        xr.DataArray or xr.Dataset
+            Composite clipped to bbox, reduced over 'time'.
+        """
+        if "time" not in xarr.coords:
+            raise ValueError("Input must have a 'time' coordinate.")
+        if len(time_range) != 2:
+            raise ValueError(
+                "time_range must be a 2-element list/tuple: [start, end].")
+
+        start = pd.to_datetime(time_range[0])
+        end   = pd.to_datetime(time_range[1])
+
+        if end < start:
+            raise ValueError("End date must be >= start date.")
+
+        # Select only the desired time window
+        da = xarr.sel(time=slice(start, end))
+        
+        # Check for empty slice
+        if da.sizes.get("time", 0) == 0:
+            warnings.warn(
+                f"No data found between {start.date()} and {end.date()}.",
+                UserWarning,
+            )
+            return None
+    
+        if gdf is not None:
+            # Ensure the same CRS
+            if xarr.rio.crs != gdf.crs:
+                gdf = gdf.to_crs(xarr.rio.crs)
+            
+            if bbox:
+                # rioxarray expects GeoJSON-like geometry objects
+                bbox_poly = box(*gdf.total_bounds)
+                da = da.rio.clip([bbox_poly], gdf.crs)
+            else:
+                da = da.rio.clip(gdf.geometry.values, gdf.crs)
+
+        # Reduce over time (mean by default). Works for DataArray or Dataset.
+        reducer = getattr(da, reduce)
+        composite = reducer(dim="time", skipna=skipna, keep_attrs=True)
+
+        return composite
+
+    @staticmethod
+    def xarr_subtract(xarr, pnts):
+        """Extract the values of an xarr within points."""
+        
+        def xy_to_rowcol(transform, xs, ys):
+            """
+            Vectorized conversion from x,y to row,col using an affine 
+            transform. rasterio.transform.rowcol is slow.
+            
+            xs, ys can be lists or numpy arrays.
+            """
+            # Extract coefficients explicitly
+            a = transform.a
+            b = transform.b
+            c = transform.c
+            d = transform.d
+            e = transform.e
+            f = transform.f
+
+            xs = np.asarray(xs, dtype="float64")
+            ys = np.asarray(ys, dtype="float64")
+
+            cols = (xs - c) / a
+            rows = (ys - f) / e
+
+            # Choose rounding mode; floor is typical for pixel indices
+            cols = np.floor(cols).astype("int64")
+            rows = np.floor(rows).astype("int64")
+
+            return rows, cols
+        
+        # Ensure the same coordinates
+        if pnts.crs != xarr.rio.crs:
+            pnts = pnts.to_crs(xarr.rio.crs)
+
+        xs = pnts.geometry.x.to_numpy()
+        ys = pnts.geometry.y.to_numpy()
         # Transform row/col by affine transform
-        transform = mean.rio.transform()
-        rows, cols = rowcol(transform, xs, ys)
+        transform = xarr.rio.transform()
+        # rows, cols = rowcol(transform, xs, ys)
+        rows, cols = xy_to_rowcol(transform, xs, ys)
+        # Obtain valid points (with data inside the image bounds)
+        H, W = xarr.sizes["y"], xarr.sizes["x"]
+        valid_mask = (rows >= 0) & (rows < H) & (cols >= 0) & (cols < W)
+        rows = rows[valid_mask]
+        cols = cols[valid_mask]
 
         # Clip to valid indices
         # Avoid obtaining row/col values outside the arr shape
-        rows = np.clip(rows, 0, mean.values.shape[1] - 1)
-        cols = np.clip(cols, 0, mean.values.shape[2] - 1)
-
+        rows = np.clip(rows, 0, xarr.values.shape[1] - 1)
+        cols = np.clip(cols, 0, xarr.values.shape[2] - 1)
         # Extract values (bands, y, x) -> transpose to (points, bands)
-        vals = mean.values[:, rows, cols].T # shape: n_points  n_band
-
-        return vals
-
+        vals = xarr.values[:, rows, cols].T # shape: n_points  n_band
+        return vals, valid_mask
+    
+    @staticmethod
+    def compute_ndvi(xarr):
+        """Compute the NDVI based on Tile bands."""
+        red = xarr[3, :, :]
+        nir = xarr[4, :, :]
+        # avoid division by zero
+        denom = nir + red
+        ndvi = (nir - red) / denom.where(denom != 0)
+        return ndvi
 
 class Aoi:
 

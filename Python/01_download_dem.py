@@ -7,23 +7,24 @@ Workflow
 2) For each tile, split it into sub-tiles of ~50,000 hectares (~500 km2).
 3) For every sub-tile:
    - Download a DEM clipped to the sub-tile extent.
-   - Compute DEM-derived products (e.g., slope, aspect, roughness; see utils_dem).
+   - Compute DEM-derived products (e.g., slope, aspect, roughness; see 
+     utils/dem.py).
    - Save outputs with a numeric suffix identifying the sub-tile.
-4) Export a GeoPackage with all sub-tile polygons, carrying the parent tile attributes.
+4) Export a GeoPackage with all sub-tile polygons, carrying the parent tile 
+   attributes.
 
 Assumptions
 -----------
-- utils_dem.py provides: split_tile_by_area, download_dem, create_divided_tile_gpd, compute_dem_products.
 - The tiles layer has a "name" field used as a unique identifier.
 - All DEM computations are handled inside compute_dem_products.
 """
 
 from pathlib import Path
-from utils_dem import split_tile_by_area
-from utils_dem import download_dem
-from utils_dem import create_divided_tile_gpd
-from utils_dem import compute_dem_products
 import geopandas as gpd
+from utils.dem import split_tile_by_area
+from utils.dem import download_dem
+from utils.dem import create_divided_tile_gpd
+from utils.dem import compute_dem_products
 
 # Project root (two levels above this file). Adjust if your layout differs.
 ROOT = Path(__file__).resolve().parent.parent

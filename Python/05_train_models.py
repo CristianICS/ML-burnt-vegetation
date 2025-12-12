@@ -1,15 +1,19 @@
-from utils_models_summerlong import Dataset, loop_training
+from utils.model import Dataset, loop_training
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
 import pickle
 
-# -------------------------------
-# Run configuration
-# -------------------------------
+
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
 
 # Dataset "version" selector used by Dataset(...) internal filters.
 version = 1
+
+# Model type to use (summer_long or spring_summer)
+mtype = "summer_long"
 
 # If you want to reuse a previous run folder, set `ctime_id` to that timestamp
 # (e.g., "20250131T104512"). If None, a new timestamped folder is created.
@@ -27,41 +31,46 @@ if ctime_id is None:
 ROOT = Path(__file__).resolve().parent.parent
 
 # Output directory for logs, metrics, confusion matrices, etc.
-outpath = Path(ROOT, f"results/logs/train_dataset_v{version}_{ctime_id}")
+folder_name = f"train_dataset_v{version}_{ctime_id}_{mtype}"
+outpath = Path(ROOT, "results", "logs", folder_name)
 outpath.mkdir(exist_ok=True, parents=True)
 
-# -------------------------------
+# -----------------------------------------------------------------------------
 # Data loading & preprocessing
-# -------------------------------
+# -----------------------------------------------------------------------------
 
 # Source data produced by the feature engineering pipeline
-labels_dataset_path = Path(ROOT, "results/dataset.gpkg")
+labels_dataset_path = Path(ROOT, "results/dataset.csv")
 label_codes_path = Path(ROOT, "data/labels/label_codes.csv")
 
 # Build the Dataset object (handles cleaning, NDVI, PCA features, etc.)
-dataset = Dataset(labels_dataset_path, label_codes_path, version)
+dataset = Dataset(labels_dataset_path, label_codes_path, version, mtype)
 
-# If you want to run a single predictor group (when use_loop=False), set it here.
+# To run a single predictor group (when use_loop=False), set it here.
 # NOTE: With `use_loop=True`, this value is ignored (kept for convenience).
 pred_id = "LspringPCA"
 
-# -------------------------------
+# -----------------------------------------------------------------------------
 # Warm-start / resume support
-# -------------------------------
+# -----------------------------------------------------------------------------
 
 # The script writes three artifacts inside `outpath`:
-#   - best_gridcv_stats.csv      : tidy per-run metrics (append-only across runs)
-#   - gridcv_stats.pkl           : list of per-run grid-search summaries (params/scores)
-#   - confusion_matrices.pkl     : list of per-run confusion matrices
+# - best_gridcv_stats.csv      : tidy per-run metrics (append-only across runs)
+# - gridcv_stats.pkl           : list of per-run grid-search summaries (params/
+#                                scores)
+# - confusion_matrices.pkl     : list of per-run confusion matrices
 
-# Initialize stats list, optionally preloading existing CSV to continue appending.
+# Initialize stats list
+# Optionally preloading existing CSV to continue appending.
 stats_path = Path(outpath, "best_gridcv_stats.csv")
 try:
     saved_stats = pd.read_csv(stats_path)
     stats_list = [saved_stats]
-    # Optional: if running a single pred_id, ensure we don't duplicate it in-place
+    # Optional: if running a single pred_id,
+    # ensure it is not duplicated in-place.
     if not use_loop and pred_id in pd.unique(saved_stats["pred_id"]):
-        raise ValueError(f"Predictor id '{pred_id}' already exists in {stats_path}.")
+        raise ValueError(
+            f"Predictor id '{pred_id}' already exists in {stats_path}.")
 except FileNotFoundError:
     stats_list = []
 
@@ -79,31 +88,33 @@ try:
 except FileNotFoundError:
     cm_list = []
 
-# -------------------------------
+# -----------------------------------------------------------------------------
 # Training
-# -------------------------------
+# -----------------------------------------------------------------------------
 
 if not use_loop:
     # Single-run mode: train just the specified predictor set.
     print(f"Start model training with {pred_id} dataset")
 
-    # BUGFIX: loop_training signature requires (dataset, pred_id, cm_list, stats_list, grid_list)
-    # and returns the three lists again. The original code called it with fewer args.
+    # BUGFIX: loop_training signature requires
+    # (dataset, pred_id, cm_list, stats_list, grid_list)
+    # and returns the three lists again.
     cm_list, stats_list, grid_list = loop_training(
         dataset, pred_id, cm_list, stats_list, grid_list
     )
 
 else:
-    # Loop mode: iterate over all predictor-set IDs that match the current version.
+    # Loop mode: iterate over all predictor-set IDs that match
+    # the current version.
     for pred_id in dataset.get_predictor_groups(version):
         print(f"Start model training with {pred_id} dataset")
         cm_list, stats_list, grid_list = loop_training(
             dataset, pred_id, cm_list, stats_list, grid_list
         )
 
-# -------------------------------
+# -----------------------------------------------------------------------------
 # Persist results
-# -------------------------------
+# -----------------------------------------------------------------------------
 
 # Save/append tidy metrics for the current session
 stats_outpath = Path(outpath, "best_gridcv_stats.csv")

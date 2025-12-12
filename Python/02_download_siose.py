@@ -1,9 +1,13 @@
-"""Download SIOSE from the extension of each image tile."""
+"""
+Download SIOSE (Spanish Land Cover) from the extension of each image tile.
+"""
+from pathlib import Path
+from io import BytesIO
+
 from rasterio.warp import transform_bounds # type: ignore
 from rasterio.crs import CRS # type: ignore
 from owslib.wms import WebMapService # type: ignore
-from pathlib import Path
-from io import BytesIO
+
 import rasterio # type: ignore
 import geopandas as gpd # type: ignore
 import xml.etree.ElementTree as ET

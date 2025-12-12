@@ -1,3 +1,6 @@
+"""
+Handle dataset labels.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +12,7 @@ import geopandas as gpd
 import rasterio
 
 # Project-specific helper
-from utils_tile import Tile
+from .tile import Tile
 
 # Optional progress bar
 try:
@@ -26,7 +29,8 @@ def sample_image_into_points(
     band: int = 1,
 ) -> gpd.GeoDataFrame:
     """
-    Sample a (single-band) raster at point locations and store values in a new column.
+    Sample a (single-band) raster at point locations and store values in
+    a new column.
 
     Parameters
     ----------
@@ -42,12 +46,14 @@ def sample_image_into_points(
     Returns
     -------
     GeoDataFrame
-        A **copy** of the input GeoDataFrame with a new column containing sampled values.
+        A **copy** of the input GeoDataFrame with a new column containing
+        sampled values.
 
     Notes
     -----
     - This function reprojects the points to the raster CRS prior to sampling.
-    - If `variable_name` already exists, a ValueError is raised to avoid accidental overwrite.
+    - If `variable_name` already exists, a ValueError is raised to avoid
+    accidental overwrite.
     """
     img_path = Path(img_path)
 
@@ -83,7 +89,8 @@ def sample_image_into_points(
 
 class Landsat:
     """
-    Extract Landsat-based seasonal predictor variables for points that fall within tiles.
+    Handle Landsat-based seasonal predictor variables
+    and the extraction for points that fall within tiles.
     """
 
     def __init__(
@@ -99,11 +106,13 @@ class Landsat:
         dataset : GeoDataFrame
             Point dataset with a valid CRS and a 'YEAR' column.
         tile_bboxes : GeoDataFrame
-            Polygon tile footprints with a 'name' column; must have a valid CRS.
+            Polygon tile footprints with a 'name' column; must have a valid
+            CRS.
         out_folder : Path or str
             Folder where per-tile outputs (.gpkg) will be written.
         images_folder : Path or str
-            Folder containing per-tile imagery (folder structure expected by `Tile`).
+            Folder containing per-tile imagery (folder structure expected
+            by `Tile`).
         """
         if dataset.crs is None:
             raise ValueError("`dataset` must have a valid CRS.")
@@ -111,7 +120,8 @@ class Landsat:
             raise ValueError("`tile_bboxes` must have a valid CRS.")
 
         self.seasons = {
-            # Month-day windows (inclusive) used to subset the xarray time dimension
+            # Month-day windows (inclusive)
+            # used to subset the xarray time dimension
             "spring": ["03-01", "05-31"],
             "summer": ["06-01", "08-31"],
             "summerlong": ["05-01", "08-31"],
@@ -122,34 +132,59 @@ class Landsat:
         self.out_folder.mkdir(parents=True, exist_ok=True)
 
         # Reproject tile footprints to match dataset CRS for spatial join
-        self.tile_bboxes = tile_bboxes.to_crs(dataset.crs)
+        if dataset.crs != tile_bboxes.crs:
+            self.tile_bboxes = tile_bboxes.to_crs(dataset.crs)
+        else:
+            self.tile_bboxes = tile_bboxes
 
-        # Keep only points that fall within any tile; 'within' removes unmatched points
-        target_data = dataset.sjoin(self.tile_bboxes, how="inner", predicate="within")
+        # Keep only points that fall within any tile
+        selected_pnts = dataset.sjoin(
+            self.tile_bboxes, how="left", predicate="within")
+        # Check for duplicated points (the same point within several tiles)
+        if not selected_pnts.index.is_unique:
+            # Move the current index (point ID) into a column:
+            # avoiding duplicate indices using idxmax
+            selected_pnts = (selected_pnts
+                .reset_index().rename(columns={'index': 'pid'}))
+            # Select the point inside the tile with more available years
+            duration = selected_pnts["final_year"] - selected_pnts["init_year"]
+            selected_pnts["duration"] = duration
+            # Remove the ones without valid tile data
+            selected_pnts.dropna(subset="duration", inplace=True)
+            # For duplicated index groups, keep the row with
+            # the maximum duration
+            max_duration = selected_pnts.groupby("pid")["duration"].idxmax()
+            selected_pnts = selected_pnts.loc[max_duration].set_index("pid")
 
         # Keep original dataset columns plus tile name (renamed to 'tile_name')
-        target_cols = dataset.columns.to_list() + ["name"]
-        # Remove duplicated point indices (can happen if a point touches multiple tiles)
-        target_data = target_data.loc[~target_data.index.duplicated(keep="first"), target_cols]
-        target_data.rename(columns={"name": "tile_name"}, inplace=True)
-        self.dataset = target_data
+        base_cols = dataset.columns
+        self.dataset = (
+            selected_pnts
+            .loc[:, list(base_cols) + ["name"]]
+            .rename(columns={"name": "tile_name"})
+        )
 
-        # Discover already computed tiles: look for files named 'tile_<name>.gpkg'
+        # Discover already computed tiles: look for files named
+        # 'tile_<name>.gpkg'
         self.computed_tiles = []
         for f in self.out_folder.glob("tile_*.gpkg"):
             stem = f.stem  # e.g., 'tile_ABC123'
             if stem.startswith("tile_") and len(stem) > 5:
-                self.computed_tiles.append(stem[5:])  # everything after 'tile_'
+                # everything after 'tile_'
+                self.computed_tiles.append(stem[5:])
+        print(f"Already computed tiles: {(', ').join(self.computed_tiles)}")
 
     def extract(self, tile_name: str) -> List[gpd.GeoDataFrame]:
         """
-        Extract seasonal band statistics for all years present in the given tile.
+        Extract seasonal band statistics for all years present in the
+        given tile.
 
         Returns
         -------
         List[GeoDataFrame]
-            A list of per-year GeoDataFrames with the new seasonal band columns.
-            Returns an empty list if there is nothing to process for the tile.
+            A list of per-year GeoDataFrames with the new seasonal band
+            columns. Returns an empty list if there is nothing to process
+            for the tile.
         """
         tdata: List[gpd.GeoDataFrame] = []
 
@@ -164,7 +199,8 @@ class Landsat:
         pnts_years: np.ndarray = pd.unique(pnts["YEAR"])
 
         # Restrict tile composites to the years present in the points.
-        # [3, 8] means restrict months March..August for performance/filtering reasons.
+        # [3, 8] means restrict months March..August for
+        # performance/filtering reasons.
         tile.filter_years(pnts_years, [3, 8])
 
         if len(tile.composite_props) == 0:
@@ -180,17 +216,17 @@ class Landsat:
             xarr = xarr.where(xarr != nodata_value, np.nan)
 
         # Reproject points to the image CRS prior to sampling
-        target_crs = xarr.rio.crs
-        pnts = pnts.to_crs(target_crs)
+        if xarr.rio.crs != pnts.crs:
+            pnts = pnts.to_crs(xarr.rio.crs)
 
         it_message = f"Extracting {tile_name} data by year"
-        iterator: Sequence = tqdm(pnts_years, desc=it_message) if TQDM else pnts_years
+        iterator = tqdm(pnts_years, desc=it_message) if TQDM else pnts_years
 
         for year in iterator:
             if year not in tile.get_years():
                 continue
 
-            year_df: gpd.GeoDataFrame = pnts.query("YEAR == @year").reset_index(drop=True)
+            year_df = pnts.query("YEAR == @year").reset_index(drop=True)
 
             # For each season, compute the temporal mean and sample the difference at points
             for sname, (start_md, end_md) in self.seasons.items():
@@ -203,11 +239,16 @@ class Landsat:
                 mean_da = subset.mean("time", skipna=True)
 
                 # Sample delta (implementation provided by Tile)
-                samples = tile.xarr_subtract(year_df, mean_da)  # shape: (n_points, n_bands)
+                samples, mask = tile.xarr_subtract(mean_da, year_df)
+                # shape: (n_points, n_bands)
 
                 # Name the columns as <band>_<season>
                 season_columns = [f"{b}_{sname}" for b in tile.band_names]
-                bands_df = pd.DataFrame(samples, columns=season_columns, index=year_df.index)
+                bands_df = pd.DataFrame(
+                    samples,
+                    columns=season_columns,
+                    index=year_df.loc[mask].index
+                )
                 year_df = year_df.join(bands_df)
 
             tdata.append(year_df)
@@ -232,11 +273,12 @@ class Landsat:
             # Concatenate years into one GeoDataFrame (preserve geometry & CRS)
             # All items share the same CRS after extract()
             crs = per_year_gdfs[0].crs
-            combined = gpd.GeoDataFrame(pd.concat(per_year_gdfs, ignore_index=True), crs=crs)
+            combined = gpd.GeoDataFrame(
+                pd.concat(per_year_gdfs, ignore_index=True), crs=crs)
 
             # Write per-tile output
             outfile = self.out_folder / f"tile_{tname}.gpkg"
-            combined.to_file(outfile, driver="GPKG")
+            combined.to_file(outfile, driver="GPKG", index=False)
             self.computed_tiles.append(tname)
 
     def merge_data(self) -> gpd.GeoDataFrame:
@@ -251,39 +293,49 @@ class Landsat:
         """
         gpkgs = list(Path(self.out_folder).glob("*.gpkg"))
         if not gpkgs:
-            raise FileNotFoundError(f"No .gpkg files found in '{self.out_folder}'.")
+            raise FileNotFoundError(
+                f"No .gpkg files found in '{self.out_folder}'.")
+        
+        frames = []
+        crs = None
+        # Reproject all the gpkgs into a common CRS
+        for f in gpkgs:
+            gdf = gpd.read_file(f)
+            if gdf.crs is None:
+                pass
+            if crs is None:
+                crs = gdf.crs.to_epsg()
 
-        # Read and project all to a common CRS for merging
-        frames = [gpd.read_file(f) for f in gpkgs]
-        frames = [gdf.to_crs(4326) for gdf in frames]
+            if gdf.crs.to_epsg() != crs:
+                # Global CRS
+                gdf = gdf.to_crs(crs)
+            frames.append(gdf)
 
         # Concatenate while keeping geometry
-        merged = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=4326)
+        merged = gpd.GeoDataFrame(
+            pd.concat(frames, ignore_index=True), crs=crs)
 
         original_columns = merged.columns
 
-        # Row-wise null counts; keep the row with *fewer* nulls when deduplicating
-        merged["_nulls"] = merged.isna().sum(axis=1)
-
-        # Exact-geometry string for duplicate detection
-        merged["_geom"] = merged.geometry.apply(lambda geom: geom.wkt)
-
-        # Sort so the "best" rows (fewest NaNs) come first
-        merged_sorted = merged.sort_values("_nulls")
-
+        # Remove geometry column to count the na data
+        merged["_nulls"] = merged.drop(columns="geometry").isna().sum(axis=1)
+        
+        # Extract hashed-geometries (WKB bytes) for duplicate detection
+        extract_geo = lambda g: None if g is None else g.wkb
+        merged["_geomkey"] = merged.geometry.apply(extract_geo)
+        
         # Define subset columns that must match to consider rows duplicates
-        subset_cols = ["YEAR", "_geom"]
-        # Include 'source' only if present
-        if "source" in merged_sorted.columns:
-            subset_cols.append("source")
+        dp_cols = ["YEAR", "_geomkey"]
+        dp_cols = dp_cols + (["source"] if "source" in merged.columns else [])
 
-        # Drop duplicates, keeping the best (first after sorting)
-        unique_dat = merged_sorted.drop_duplicates(subset=subset_cols, keep="first").copy()
+        # idx of best row per duplicate group (min nulls)
+        # IMPORTANT: Do not preserve only rows with no na values.
+        # The summer long period has data where the others not.
+        best_idx = merged.groupby(dp_cols, sort=False)["_nulls"].idxmin()
+        unique_dat = merged.loc[best_idx].copy()
 
         # Restore original column order
         unique_dat = unique_dat[original_columns]
-        # Clean helper columns if they sneaked into original_columns (unlikely but safe)
-        unique_dat = unique_dat.drop(columns=[c for c in ["_nulls", "_geom"] if c in unique_dat.columns], errors="ignore")
         return unique_dat
 
 
@@ -314,13 +366,14 @@ def extract_global(
 
     out = dataset.copy()
 
-    # DEM-derived variables (each .vrt is a single-band mosaic or virtual raster)
+    # DEM-derived variables
+    # (each .vrt is a single-band mosaic or virtual raster)
     for p in sorted(dem_variables_path.glob("*.vrt")):
         variable = p.stem  # e.g., 'slope', 'aspect', ...
         print(f"Extracting DEM variable: {variable}")
         out = sample_image_into_points(out, variable, p)
 
-    # Lithology example: ACIBASI
+    # Lithology
     acibasi = lit_variables_path / "ACIBASI.tif"
     if acibasi.exists():
         print("Extracting lithology variable: acibasi")
