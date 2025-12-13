@@ -6,6 +6,7 @@ data/labels/ifn3_labels.gpkg
 data/labels/ifn4_labels.gpkg
 data/labels/label_ifn_codes.csv
 data/labels/README.txt
+data/labels/ground_points_db_v0.gpkg
 data/lucas/
 data/models/
 data/predictor_variables/
@@ -16,13 +17,14 @@ Notebooks/inspect_ifn2.ipynb
 Notebooks/inspect_ifn3_4.ipynb
 Notebooks/inspect_predictors_summerlong.ipynb
 papers/
-results/logs/
+results/logs/*
+!results/logs/v0.1/
+results/logs/v0.1/*
+!results/logs/v0.1/*_spring_summer
 results/tile_extracted_values/
 results/tile_extracted_values_v0/
 results/dataset.gpkg
 results/dataset_geo.gpkg
 results/dataset_geo_v0.gpkg
 Python/__pycache__/
-Python/v0
-Python_deprecated/
-README_esp.md
+Python/utils/__pycache__
