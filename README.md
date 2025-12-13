@@ -64,8 +64,6 @@ The dataset contains data from the Spanish National Forest Inventory (IFN by its
 5. `Notebooks/inspect_predictors.ipynb`
    Perform data analysis to remove outliers and select the best predictor sets.
 
-   > [!IMPORTANT]
-   > The rules and filters for removing invalid data from the dataset are included int the *utils* module [`model.py`](Python/utils/model.py), which is used to perform the training phase.
 
 6. `Python/05_train_models.py`
    Train each model pipeline and save the statistics.
@@ -75,6 +73,9 @@ The dataset contains data from the Spanish National Forest Inventory (IFN by its
 
 8. `Python/06_spatial_autocorr.py`
    Compute Moran's I to assess spatial autocorrelation in the dataset.
+
+> [!IMPORTANT]
+> The rules and filters for removing invalid data from the dataset are included int the *utils* module [`model.py`](Python/utils/model.py), which is used to perform the training phase.
 
 ## Install environments
 
