@@ -14,6 +14,7 @@ Notebooks/check_borini_tile_erros.ipynb
 Notebooks/fix_borini_tile_errors.ipynb
 Notebooks/inspect_ifn2.ipynb
 Notebooks/inspect_ifn3_4.ipynb
+Notebooks/inspect_predictors_summerlong.ipynb
 papers/
 results/logs/
 results/tile_extracted_values/
