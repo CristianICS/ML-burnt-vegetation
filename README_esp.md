@@ -103,8 +103,6 @@ Además, se ha obtenido la variable ácido/básico, capa de información binaria
 5. `Notebooks/inspect_predictors.ipynb`
    Realiza análisis de datos para eliminar valores atípicos y seleccionar los mejores conjuntos de predictores.
 
-   > [!IMPORTANT]
-   > Las reglas y filtros para eliminar datos inválidos del conjunto de datos están incluidos en el módulo de *utils* [`model.py`](Python/utils/model.py), que se utiliza para llevar a cabo la fase de entrenamiento.
 
 6. `Python/05_train_models.py`
    Entrena todos los modelos por cada combinación de variables y preprocesos definidos, guardando las estadísticas.
@@ -114,6 +112,9 @@ Además, se ha obtenido la variable ácido/básico, capa de información binaria
 
 8. `Python/06_spatial_autocorr.py`
    Calcula el índice de Moran (Moran's I) para evaluar la autocorrelación espacial en el conjunto de datos.
+
+> [!IMPORTANT]
+> Las reglas y filtros para eliminar datos inválidos del conjunto de datos están incluidos en el módulo de *utils* [`model.py`](Python/utils/model.py), que se utiliza para llevar a cabo la fase de entrenamiento.
 
 ## Instalación de entornos
 
