@@ -1,6 +1,6 @@
 # Machine Learning for Post-Fire Vegetation Classification in Aragón
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17297183.svg)](https://doi.org/10.5281/zenodo.17297183)
+<!-- [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17297183.svg)](https://doi.org/10.5281/zenodo.17297183) -->
 
 The presented framework integrates **Landsat multispectral imagery**, **topographic and edaphic variables**, and **machine-learning classifiers** (Random Forest and Support Vector Machines) to classify forest vegetation and its associated burned-shrub states across Aragón, Spain.
 
@@ -19,7 +19,12 @@ All pipelines are fully reproducible and have been published on [Zenodo](https:/
 
 ## Landsat images
 
-Landsat images are stored in a folder for each tile, and the classes inside `utils_tile.py` help manage them. They were produced using the methods described in:
+Landsat images were processed to create a harmonized series between the Landsat and Sentinel-2 constellations.
+
+> [!NOTE]
+> They have not been included in this repository due to space constraints.
+
+A whole utils module was created in the shared code to handle them ([tile.py](Python/utils/tile.py)). These images were produced using the methods described in:
 
 ```bibtex
 @article{alvesImpactImageAcquisition2022,
@@ -37,38 +42,48 @@ Landsat images are stored in a folder for each tile, and the classes inside `uti
 
 ## IFN Data
 
-The dataset does not include geographic coordinates, as the precise locations of the National Forest Inventory data are protected.
+The dataset contains data from the Spanish National Forest Inventory (IFN by its Spanish name) 2, 3, and 4 from the study area in Aragón. The data was extracted using the *utils* module [`ifn.py`](Python/utils/ifn.py).
+
+> [!IMPORTANT]
+> The provided dataset does not include geographic coordinates because the precise locations of the National Forest Inventory data are protected
 
 ## Workflow
 
-1. `Python/download_dem.py`
-   Download the elevation data for each tile and create the related predictor variables.
+1. `Python/01_download_dem.py`
+   Download the elevation data for the study area and create the related predictor variables.
 
-2. `Python/download_siose.py`
-   Save the SIOSE information for each image tile.
+2. `Python/02_download_siose.py`
+   Save the SIOSE (Spanish Land Cover data) information for the study area.
 
-3. `Python/extract_soil_siose.py`
+3. `Python/03_extract_soil.py` and `Python/03_filter_soil.py`
    Automatically extract labels from the sparse vegetation class.
 
-4. `Python/create_dataset.py`
+4. `Python/04_create_dataset.py`
    Combine data from manual digitization, sparse vegetation, and IFN into a single file, and add the predictor variables.
 
 5. `Notebooks/inspect_predictors.ipynb`
    Perform data analysis to remove outliers and select the best predictor sets.
 
-6. `Python/train_models.py`
+   > [!IMPORTANT]
+   > The rules and filters for removing invalid data from the dataset are included int the *utils* module [`model.py`](Python/utils/model.py), which is used to perform the training phase.
+
+6. `Python/05_train_models.py`
    Train each model pipeline and save the statistics.
 
 7. `Notebooks/inspect_models.ipynb`
    Review the statistics from the model training phase.
 
-8. `Python/moran_i.py`
+8. `Python/06_spatial_autocorr.py`
    Compute Moran's I to assess spatial autocorrelation in the dataset.
 
 ## Install environments
 
-In conda, create the `classification` environment:
+With conda, create the `classification` environment:
 
 ```bash
 conda env create --file=requirements.yml
 ```
+
+## Training results
+
+The log files containing the results of the training phase for all defined pipelines are stored in the [log folder](results/logs/v0.1). Each subfolder contains the data used in the [`inspect_models.ipynb`](Notebooks/inspect_models.ipynb) notebook to select the best model pipelines.
